@@ -8,12 +8,13 @@ import {logger} from '../utils/logger';
 
   constructor(data) {
     this._hasTimeStamp = false;
-    var offset = 0, byte1,byte2,byte3,byte4,tagSize,endPos,header,len;
+    var offset = 0, byte1,byte2,byte3,byte4,tagSize,endPos,header,len,version;
       do {
         header = this.readUTF(data,offset,3);
         offset+=3;
           // first check for ID3 header
           if (header === 'ID3') {
+	      version = (data[offset] << 8) + data[offset+1];
               // skip 24 bits
               offset += 3;
               // retrieve tag(s) length
@@ -26,7 +27,7 @@ import {logger} from '../utils/logger';
               //logger.log(`ID3 tag found, size/end: ${tagSize}/${endPos}`);
 
               // read ID3 tags
-              this._parseID3Frames(data, offset,endPos);
+              this._parseID3Frames(data, offset, endPos, version);
               offset = endPos;
           } else if (header === '3DI') {
               // http://id3.org/id3v2.4.0-structure chapter 3.4.   ID3v2 footer
@@ -57,22 +58,33 @@ import {logger} from '../utils/logger';
     return result;
   }
 
-  _parseID3Frames(data,offset,endPos) {
-    var tagId,tagLen,tagStart,tagFlags,timestamp;
-    while(offset + 8 <= endPos) {
+  _parseID3Frames(data,offset,endPos,version) {
+    var tagId,tagLen,tagStart,tagFlags,timestamp,originalOffset;
+    originalOffset = offset;
+    while(offset + 10 <= endPos) {
+      //logger.log("_parseID3Frames: offset " + offset + " endPos " + endPos);
       tagId = this.readUTF(data,offset,4);
       offset +=4;
 
-      tagLen = data[offset++] << 24 +
-                data[offset++] << 16 +
-                data[offset++] << 8 +
-                data[offset++];
+      if (version >= 0x0400) {
+        // this is for ID3 v2.4.0 (4 * %0xxxxxxx) -- v2.3.0 says $ xx xx xx xx
+        tagLen = (data[offset++] << 21) +
+                 (data[offset++] << 14) +
+                 (data[offset++] << 7) +
+                  data[offset++];
+      } else {
+        tagLen = (data[offset++] << 24) +
+                 (data[offset++] << 16) +
+                 (data[offset++] << 8) +
+                  data[offset++];
+      }
 
-      tagFlags = data[offset++] << 8 +
+      tagFlags = (data[offset++] << 8) +
                   data[offset++];
 
       tagStart = offset;
       //logger.log("ID3 tag id:" + tagId);
+      //logger.log("ID3 tagStart " + tagStart + " tagLen " + tagLen + " tagFlags " + tagFlags);
       switch(tagId) {
         case 'PRIV':
             //logger.log('parse frame:' + Hex.hexDump(data.subarray(offset,endPos)));
@@ -95,6 +107,15 @@ import {logger} from '../utils/logger';
                 if (pts33Bit) {
                     timestamp   += 47721858.84; // 2^32 / 90
                 }
+
+		// bad hack for certain streams, where timestamps at end seem to be in msec...
+		// as bad as this hack is, it will only happen where older code missed timestamps!
+		if (version >= 0x400 
+		 && (tagStart > originalOffset + 10)
+		 && (tagStart + tagLen == endPos)) {
+		    timestamp *= 90;
+		}
+
                 timestamp = Math.round(timestamp);
                 logger.trace(`ID3 timestamp found: ${timestamp}`);
                 this._timeStamp = timestamp;
@@ -103,6 +124,10 @@ import {logger} from '../utils/logger';
         default:
             break;
       }
+      
+      // to parse correctly (if PRIV tag isn't first),
+      // we need to set offset correctly to the end of the tag!
+      offset = tagStart + tagLen;
     }
   }
 
