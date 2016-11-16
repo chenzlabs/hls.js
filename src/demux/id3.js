@@ -108,14 +108,6 @@ import {logger} from '../utils/logger';
                     timestamp   += 47721858.84; // 2^32 / 90
                 }
 
-		// bad hack for certain streams, where timestamps at end seem to be in msec...
-		// as bad as this hack is, it will only happen where older code missed timestamps!
-		if (version >= 0x400 
-		 && (tagStart > originalOffset + 10)
-		 && (tagStart + tagLen == endPos)) {
-		    timestamp *= 90;
-		}
-
                 timestamp = Math.round(timestamp);
                 logger.trace(`ID3 timestamp found: ${timestamp}`);
                 this._timeStamp = timestamp;
